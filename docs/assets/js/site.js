@@ -1,7 +1,7 @@
 // Shared behaviour for every page: menus, tool search, category filters.
 (() => {
   'use strict';
-  const Q = window.QUIRE || {}; const root = Q.root || '';
+  const Q = window.QUIRE || {}; const root = Q.root || ''; const IDX = Q.idx || '';
   const $ = (s, r = document) => r.querySelector(s); const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -62,13 +62,13 @@
     let tools = (Q.tools || []).filter(t => !mode || !mode.filter || mode.filter(t));
     if (words.length) tools = tools.map(t => { const hay = `${t.name} ${t.short} ${t.kw}`.toLowerCase(); return [t, words.every(w => hay.includes(w)) ? (t.name.toLowerCase().includes(words[0]) ? 2 : 1) : 0]; }).filter(x => x[1]).sort((a, b) => b[1] - a[1]).map(x => x[0]);
     shown = tools.slice(0, 60); sel = 0;
-    list.innerHTML = shown.length ? shown.map((t, i) => `<li>${mode && mode.onPick ? `<button type="button" data-slug="${t.slug}" role="option" aria-selected="${i === 0}">` : `<a href="${root}${t.slug}/" data-slug="${t.slug}" role="option" aria-selected="${i === 0}">`}${t.icon}<span style="min-width:0"><b>${esc(t.name)}</b><small>${esc(t.short)}</small></span><em>${esc(catName(t.cat))}</em>${mode && mode.onPick ? '</button>' : '</a>'}</li>`).join('')
+    list.innerHTML = shown.length ? shown.map((t, i) => `<li>${mode && mode.onPick ? `<button type="button" data-slug="${t.slug}" role="option" aria-selected="${i === 0}">` : `<a href="${root}${t.slug}/${IDX}" data-slug="${t.slug}" role="option" aria-selected="${i === 0}">`}${t.icon}<span style="min-width:0"><b>${esc(t.name)}</b><small>${esc(t.short)}</small></span><em>${esc(catName(t.cat))}</em>${mode && mode.onPick ? '</button>' : '</a>'}</li>`).join('')
       : '<li class="none">No tool matches that. Try “merge”, “word” or “sign”.</li>';
   }
   function open(m) { if (!pal) return; mode = m || null; ttl.hidden = !(mode && mode.title); ttl.textContent = mode && mode.title || ''; pal.hidden = false; scrim.hidden = false; input.value = ''; render(); input.focus(); }
   function close() { if (!pal) return; pal.hidden = true; scrim.hidden = true; mode = null; }
   function move(d) { if (!shown.length) return; sel = (sel + d + shown.length) % shown.length; $$('[data-slug]', list).forEach((el, i) => { el.setAttribute('aria-selected', i === sel); if (i === sel) el.scrollIntoView({ block: 'nearest' }); }); }
-  function pick(slug) { if (mode && mode.onPick) { const m = mode; close(); m.onPick(slug); } else location.href = `${root}${slug}/`; }
+  function pick(slug) { if (mode && mode.onPick) { const m = mode; close(); m.onPick(slug); } else location.href = `${root}${slug}/${IDX}`; }
   if (pal) {
     input.addEventListener('input', render);
     input.addEventListener('keydown', e => {

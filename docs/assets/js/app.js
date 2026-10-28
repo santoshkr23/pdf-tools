@@ -1345,7 +1345,7 @@ const IDB = {
 const PDF_ENGINES = new Set(Object.keys(E).filter(k => E[k].accept === 'pdf'));
 function continueWith() {
   const r = state.results[0]; if (!r || !window.QuireSite) return;
-  window.QuireSite.openPalette({ title: 'Send this PDF to…', filter: t => PDF_ENGINES.has(t.engine) && t.slug !== TOOL.slug, onPick: async slug => { try { await IDB.put({ name: r.name, bytes: r.bytes, t: Date.now() }); location.href = `${ROOT}${slug}/?from=continue`; } catch (e) { toast('Your browser blocked passing the file along. Download it and add it on the next page.'); } } });
+  window.QuireSite.openPalette({ title: 'Send this PDF to…', filter: t => PDF_ENGINES.has(t.engine) && t.slug !== TOOL.slug, onPick: async slug => { try { await IDB.put({ name: r.name, bytes: r.bytes, t: Date.now() }); location.href = `${ROOT}${slug}/${Q.idx || ''}?from=continue`; } catch (e) { toast('Your browser blocked passing the file along. Download it and add it on the next page.'); } } });
 }
 
 /* ================= events ================= */
