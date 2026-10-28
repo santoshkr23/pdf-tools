@@ -312,7 +312,13 @@ const PDF_IN = { accept: 'pdf' };
 const rotSel = (o, i, n) => { if (o.which === 'odd') return i % 2 === 0; if (o.which === 'even') return i % 2 === 1; if (o.which === 'list') { try { return parseRanges(o.list, n).some(g => g.idx.includes(i)); } catch (e) { return false; } } return true; };
 function numText(o, i, total) { const st = +o.start || 0; const n = st + i - (o.skip ? 1 : 0); const last = st + total - 1 - (o.skip ? 1 : 0); return { n: `${n}`, page: `Page ${n}`, of: `${n} / ${last}`, pageof: `Page ${n} of ${last}` }[o.fmt]; }
 function stampHtml(text, pos, size, w, h, color) { const m = 28; const v = pos[0] === 'b' ? `bottom:${m / h * 100}%` : `top:${m / h * 100}%`; const hz = pos[1] === 'c' ? 'left:50%;transform:translateX(-50%)' : pos[1] === 'r' ? `right:${m / w * 100}%` : `left:${m / w * 100}%`; return `<span class="stamp" style="${v};${hz};font-size:calc(${size} * 100cqw / ${w});color:${color}">${esc(text)}</span>`; }
-function drawStamp(p, font, text, pos, size, color) { const tw = latinCheck(font, text, size); const b = p.getMediaBox(); const m = 28; const x = b.x + (pos[1] === 'c' ? (b.width - tw) / 2 : pos[1] === 'r' ? b.width - m - tw : m); const y = b.y + (pos[0] === 'b' ? m : b.height - m - size * 0.75); p.drawText(text, { x, y, size, font, color }); }
+function drawStamp(p, font, text, pos, size, color) { // position is as the reader sees the page, even on rotated pages
+  const tw = latinCheck(font, text, size); const b = p.getMediaBox(); const rot = ((p.getRotation().angle % 360) + 360) % 360; const m = 28;
+  const vw = rot % 180 ? b.height : b.width, vh = rot % 180 ? b.width : b.height;
+  const vx = pos[1] === 'c' ? (vw - tw) / 2 : pos[1] === 'r' ? vw - m - tw : m; const vy = pos[0] === 'b' ? m : vh - m - size * 0.75;
+  const [px, py] = rot === 90 ? [b.width - vy, vx] : rot === 180 ? [b.width - vx, b.height - vy] : rot === 270 ? [vy, b.height - vx] : [vx, vy];
+  p.drawText(text, { x: b.x + px, y: b.y + py, size, font, color, rotate: degrees(rot) });
+}
 const rotOrigin = (cx, cy, w, h, th) => [cx - (w / 2) * Math.cos(th) + (h / 2) * Math.sin(th), cy - (w / 2) * Math.sin(th) - (h / 2) * Math.cos(th)];
 const BLANK_T = { strict: 0.0006, normal: 0.004, loose: 0.012 };
 function blankSet(f) { const s = new Set(); if (!f || !f.ink) return s; const t = BLANK_T[state.opts.level]; for (let i = 0; i < f.pages; i++) { const auto = f.ink[i] != null && f.ink[i] < t; const o = state.blankOverride[i]; if (o === true || (o == null && auto)) s.add(i); } return s; }
@@ -438,18 +444,19 @@ E.watermark = { accept: 'pdf', view: 'pages', verb: 'Add watermark',
     return o.layout === 'tile' ? { ov: `<div class="wm-tile" style="transform:rotate(${rot}deg);font-size:${fs};color:${c};opacity:${op};gap:2.4em 1.6em">${Array.from({ length: 40 }, () => `<span>${t}</span>`).join('')}</div>` } : { ov: `<div class="wm" style="font-size:${fs};color:${c};opacity:${op};transform:translate(-50%,-50%) rotate(${rot}deg)">${t}</div>` };
   },
   async run({ files, opts }) {
-    const doc = await loadLib(files[0]); const op = opts.opacity / 100; const th = (+opts.angle) * Math.PI / 180; let draw;
+    const doc = await loadLib(files[0]); const op = opts.opacity / 100; let th = 0, deg = 0; let draw;
     if (opts.kind === 'image') {
       if (!state.wmImage) throw new Error('Choose an image for the watermark first.');
       const img = state.wmImage.mime === 'image/png' ? await doc.embedPng(state.wmImage.bytes) : await doc.embedJpg(state.wmImage.bytes);
-      draw = (p, cx, cy, W) => { const w = W * opts.scale / 100 * (opts.layout === 'tile' ? 0.45 : 1); const h = w * img.height / img.width; if (cx > -9000) { const [x, y] = rotOrigin(cx, cy, w, h, th); p.drawImage(img, { x, y, width: w, height: h, opacity: op, rotate: degrees(+opts.angle) }); } return [w, h]; };
+      draw = (p, cx, cy, W) => { const w = W * opts.scale / 100 * (opts.layout === 'tile' ? 0.45 : 1); const h = w * img.height / img.width; if (cx > -9000) { const [x, y] = rotOrigin(cx, cy, w, h, th); p.drawImage(img, { x, y, width: w, height: h, opacity: op, rotate: degrees(deg) }); } return [w, h]; };
     } else {
       const text = (opts.text || '').trim(); if (!text) throw new Error('Type the watermark text first.');
       const font = await doc.embedFont(StandardFonts.HelveticaBold); const size = +opts.size; const w = latinCheck(font, text, size); const h = size * 0.72; const color = rgb(...(COLORS[opts.color] || COLORS.grey));
-      draw = (p, cx, cy) => { if (cx > -9000) { const [x, y] = rotOrigin(cx, cy, w, h, th); p.drawText(text, { x, y, size, font, color, opacity: op, rotate: degrees(+opts.angle) }); } return [w, h]; };
+      draw = (p, cx, cy) => { if (cx > -9000) { const [x, y] = rotOrigin(cx, cy, w, h, th); p.drawText(text, { x, y, size, font, color, opacity: op, rotate: degrees(deg) }); } return [w, h]; };
     }
     doc.getPages().forEach(p => {
       const b = p.getMediaBox(); const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+      deg = (+opts.angle + p.getRotation().angle) % 360; th = deg * Math.PI / 180;
       if (opts.layout !== 'tile') { draw(p, cx, cy, b.width); return; }
       const [w, h] = draw(p, -9999, -9999, b.width); const sx = w * 1.5 + 40, sy = h * 3.2 + 40; const R = Math.hypot(b.width, b.height);
       for (let gy = -R; gy <= R; gy += sy) for (let gx = -R; gx <= R; gx += sx) { const off = (Math.abs(Math.round(gy / sy)) % 2) * sx / 2; const x = cx + (gx + off) * Math.cos(th) - gy * Math.sin(th), y = cy + (gx + off) * Math.sin(th) + gy * Math.cos(th); if (x > b.x - w && x < b.x + b.width + w && y > b.y - w && y < b.y + b.height + w) draw(p, x, y, b.width); }
@@ -736,11 +743,30 @@ E.totext = { accept: 'pdf', view: 'pages', verb: 'Extract text', caveat: 'Scanne
     return { files: [{ name: `${baseName(f.name)}.${opts.fmt}`, bytes: new TextEncoder().encode(body), text: body }], note: `${chars.toLocaleString()} characters from ${plural(f.pages, 'page')}.` };
   } };
 E.pdf2word = { accept: 'pdf', view: 'pages', verb: 'Convert to Word',
-  opts: [{ k: 'mode', label: 'Output', type: 'seg', def: 'text', choices: [['text', 'Editable text'], ['layout', 'Exact look']], hint: '“Editable text” keeps headings and paragraphs. “Exact look” puts a picture of each page in Word.' }],
+  opts: [{ k: 'mode', label: 'Output', type: 'seg', def: 'same', choices: [['same', 'Same layout'], ['text', 'Text only'], ['layout', 'Picture']], hint: '“Same layout” keeps the exact look with editable text on top of the page graphics; best opened in Microsoft Word or LibreOffice. “Text only” gives clean paragraphs. “Picture” puts an image of each page in Word.' }],
   async run({ files, opts, progress }) {
     const f = files[0]; const D = window.docx; if (!D) throw new Error('The Word writer didn’t load. Check your connection and reload.');
-    const first = f.sizes[0] || [595, 842]; let doc;
-    if (opts.mode === 'layout') {
+    const first = f.sizes[0] || [595, 842]; let doc; let note = '';
+    if (opts.mode === 'same') {
+      const sections = []; let words = 0;
+      for (let i = 1; i <= f.pages; i++) {
+        progress(`Rebuilding page ${i} of ${f.pages}`, (i - 1) / f.pages * 0.92);
+        const pg = await layoutPage(f.view, i); words += pg.chars;
+        const tw = v => Math.round(v * 20);
+        const children = [new D.Paragraph({ spacing: { before: 0, after: 0, line: 20, lineRule: D.LineRuleType.EXACT }, children: [new D.ImageRun({ type: 'jpg', data: pg.bg, transformation: { width: Math.round(pg.w * 96 / 72), height: Math.round(pg.h * 96 / 72) }, floating: { horizontalPosition: { relative: D.HorizontalPositionRelativeFrom.PAGE, offset: 0 }, verticalPosition: { relative: D.VerticalPositionRelativeFrom.PAGE, offset: 0 }, behindDocument: true, allowOverlap: true, lockAnchor: true, wrap: { type: D.TextWrappingType.NONE } } })] })];
+        pg.segs.forEach(sg => {
+          const lh = sg.size * 1.2;
+          children.push(new D.Paragraph({
+            frame: { type: 'absolute', position: { x: tw(Math.max(0, sg.x - 1)), y: tw(Math.max(0, sg.base - sg.size * 0.98)) }, width: tw(Math.max(8, Math.min(pg.w - sg.x + 1, sg.w * 1.16 + sg.size * 1.2))), height: tw(lh), rule: D.HeightRule.EXACT, wrap: D.FrameWrap.NONE, anchor: { horizontal: D.FrameAnchorType.PAGE, vertical: D.FrameAnchorType.PAGE } },
+            spacing: { before: 0, after: 0, line: tw(lh), lineRule: D.LineRuleType.EXACT },
+            children: sg.runs.map(r => new D.TextRun({ text: r.text, size: Math.max(2, Math.round(r.size * 2)), bold: r.bold || undefined, italics: r.italic || undefined, color: r.color, font: r.font })),
+          }));
+        });
+        sections.push({ properties: { page: { size: { width: tw(pg.w), height: tw(pg.h) }, margin: { top: 0, right: 0, bottom: 0, left: 0, header: 0, footer: 0 } } }, children });
+      }
+      if (words < 5) note = ' This PDF has almost no real text (it may be a scan), so run it through OCR PDF first if you need to edit the words.';
+      doc = new D.Document({ styles: { default: { document: { run: { font: 'Arial' } } } }, sections });
+    } else if (opts.mode === 'layout') {
       const sections = [];
       for (let i = 1; i <= f.pages; i++) {
         progress(`Drawing page ${i} of ${f.pages}`, (i - 1) / f.pages); const r = await renderPage(f.view, i, { scale: 2 }); const data = await blobBytes(await canvasBlob(r.canvas, 'image/jpeg', 0.88)); r.canvas.width = 0;
@@ -748,13 +774,59 @@ E.pdf2word = { accept: 'pdf', view: 'pages', verb: 'Convert to Word',
       }
       doc = new D.Document({ sections });
     } else {
-      const { pages, chars } = await docBlocks(f.view, progress); if (chars < 20) throw new Error('No text was found. This looks like a scanned PDF; run it through OCR PDF first, or choose “Exact look”.');
+      const { pages, chars } = await docBlocks(f.view, progress); if (chars < 20) throw new Error('No text was found. This looks like a scanned PDF; run it through OCR PDF first, or choose “Same layout” or “Picture”.');
       const children = []; pages.forEach((pg, pi) => pg.paras.forEach((b, bi) => { children.push(new D.Paragraph({ heading: b.level === 1 ? D.HeadingLevel.HEADING_1 : b.level === 2 ? D.HeadingLevel.HEADING_2 : undefined, pageBreakBefore: pi > 0 && bi === 0, spacing: { after: 140 }, children: [new D.TextRun({ text: b.text })] })); }));
       doc = new D.Document({ styles: { default: { document: { run: { font: 'Calibri', size: 22 } } } }, sections: [{ properties: { page: { size: { width: Math.round(first[0] * 20), height: Math.round(first[1] * 20) }, margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } } }, children }] });
     }
     progress('Writing the Word file', 0.96);
-    return { files: [{ name: baseName(f.name) + '.docx', bytes: await blobBytes(await D.Packer.toBlob(doc)), noPreview: true }], note: `${plural(f.pages, 'page')} converted${opts.mode === 'layout' ? ' as page pictures' : ' to editable text'}.` };
+    const label = { same: 'with the same layout and editable text', text: 'to editable text', layout: 'as page pictures' }[opts.mode];
+    return { files: [{ name: baseName(f.name) + '.docx', bytes: await blobBytes(await D.Packer.toBlob(doc)), noPreview: true }], note: `${plural(f.pages, 'page')} converted ${label}.${note}` };
   } };
+
+// For “Same layout”: page graphics without text as a background, plus every text line with position, size, weight and colour.
+let quietText = 0;
+async function layoutPage(doc, n) {
+  const S = 2; const page = await doc.getPage(n); const vp1 = page.getViewport({ scale: 1 });
+  const full = await renderPage(doc, n, { scale: S });
+  const P = CanvasRenderingContext2D.prototype; const ft = P.fillText, st = P.strokeText; let bg;
+  quietText++; P.fillText = function () {}; P.strokeText = function () {};
+  try { bg = await renderPage(doc, n, { scale: S }); } finally { if (--quietText === 0) { P.fillText = ft; P.strokeText = st; } }
+  const W = full.canvas.width, H = full.canvas.height; const A = full.canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data; const B = bg.canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+  const tc = await page.getTextContent(); const items = [];
+  for (const it of tc.items) {
+    if (!it.str || !it.str.trim()) continue;
+    const tx = pdfjsLib.Util.transform(vp1.transform, it.transform); const size = Math.hypot(tx[2], tx[3]) || 10; if (size < 1) continue;
+    let fname = ''; try { if (page.commonObjs.has(it.fontName)) { const fo = page.commonObjs.get(it.fontName); fname = (fo && (fo.name || fo.loadedName)) || ''; } } catch (e) {}
+    const fam = (tc.styles[it.fontName] || {}).fontFamily || '';
+    const font = /courier|mono/i.test(fname + fam) ? 'Courier New' : /times|georgia|garamond|serif(?!.*sans)|minion|cambria/i.test(fname) || (/^serif$/i.test(fam) && !/sans|arial|helv/i.test(fname)) ? 'Times New Roman' : /calibri/i.test(fname) ? 'Calibri' : /verdana/i.test(fname) ? 'Verdana' : /tahoma/i.test(fname) ? 'Tahoma' : 'Arial';
+    const w = Math.max(it.width * Math.hypot(vp1.transform[0], vp1.transform[1]), size * 0.3 * it.str.length);
+    // colour: the pixel that changes most between the page with and without text
+    let best = -1, col = '000000'; const x0 = Math.max(0, Math.floor(tx[4] * S)), x1 = Math.min(W - 1, Math.ceil((tx[4] + w) * S)), y0 = Math.max(0, Math.floor((tx[5] - size * 0.85) * S)), y1 = Math.min(H - 1, Math.ceil((tx[5] + size * 0.15) * S));
+    for (let y = y0; y <= y1; y += 2) for (let x = x0; x <= x1; x += 2) { const k = (y * W + x) * 4; const d = Math.abs(A[k] - B[k]) + Math.abs(A[k + 1] - B[k + 1]) + Math.abs(A[k + 2] - B[k + 2]); if (d > best) { best = d; col = ((1 << 24) | (A[k] << 16) | (A[k + 1] << 8) | A[k + 2]).toString(16).slice(1).toUpperCase(); } }
+    if (best < 90) col = '000000';
+    items.push({ x: tx[4], base: tx[5], size, w, text: it.str, bold: /bold|black|heavy|semibold|demi/i.test(fname), italic: /italic|oblique/i.test(fname), font, color: col });
+  }
+  // group into lines, then split lines into segments at large gaps
+  items.sort((a, b) => a.base - b.base || a.x - b.x);
+  const lines = [];
+  for (const it of items) { const L = lines.find(l => Math.abs(l.base - it.base) < Math.min(l.size, it.size) * 0.35); if (L) { L.items.push(it); L.size = Math.max(L.size, it.size); } else lines.push({ base: it.base, size: it.size, items: [it] }); }
+  const segs = []; let chars = 0;
+  for (const L of lines) {
+    L.items.sort((a, b) => a.x - b.x); let cur = null;
+    for (const it of L.items) {
+      chars += it.text.length;
+      const gap = cur ? it.x - cur.end : 0;
+      if (!cur || gap > Math.max(it.size * 0.45, 3) || gap < -it.size * 0.5) { cur = { x: it.x, base: L.base, size: it.size, end: it.x + it.w, runs: [] }; segs.push(cur); }
+      else if (gap > it.size * 0.12 && !/\s$/.test(cur.runs[cur.runs.length - 1].text) && !/^\s/.test(it.text)) cur.runs.push(Object.assign({}, it, { text: ' ' }));
+      const last = cur.runs[cur.runs.length - 1];
+      if (last && last.bold === it.bold && last.italic === it.italic && last.color === it.color && last.font === it.font && Math.abs(last.size - it.size) < 0.3) last.text += it.text; else cur.runs.push(it);
+      cur.end = Math.max(cur.end, it.x + it.w); cur.size = Math.max(cur.size, it.size);
+    }
+  }
+  segs.forEach(sg => { sg.w = sg.end - sg.x; sg.runs.forEach(r => { r.text = r.text.replace(/[\t\r\n]+/g, ' '); }); });
+  const bgBytes = await blobBytes(await canvasBlob(bg.canvas, 'image/jpeg', 0.86)); full.canvas.width = 0; bg.canvas.width = 0;
+  return { w: vp1.width, h: vp1.height, segs: segs.filter(sg => sg.runs.some(r => r.text.trim())), bg: bgBytes, chars };
+}
 E.pdf2excel = { accept: 'pdf', view: 'pages', verb: 'Convert to Excel', caveat: 'Works with PDFs that contain real text, such as exported statements and reports. Run scans through OCR PDF first.',
   opts: [{ k: 'sheets', label: 'Sheets', type: 'seg', def: 'page', choices: [['page', 'One per page'], ['one', 'All in one']] }],
   async run({ files, opts, progress }) {
@@ -1134,6 +1206,7 @@ async function ensureThumbs(f) {
   if (f.thumbing || f.locked || !f.view) return; f.thumbing = true;
   for (let i = 0; i < Math.min(f.pages, 400); i++) {
     if (f.pageThumbs[i]) continue; if (!state.files.includes(f)) break;
+    while (quietText) await sleep(120);
     try {
       const r = await renderPage(f.view, i + 1, { width: 240 }); f.sizes[i] = [r.w, r.h]; f.ink[i] = inkRatio(r.canvas); f.pageThumbs[i] = r.canvas.toDataURL('image/jpeg', 0.78); r.canvas.width = 0;
       $$(`[data-ph="${f.id}-${i}"]`).forEach(ph => { const img = document.createElement('img'); img.src = f.pageThumbs[i]; img.alt = ''; img.dataset.img = ''; ph.replaceWith(img); });
