@@ -1,0 +1,16 @@
+name = "quire-api"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# Sites allowed to call this worker (comma-separated). Add your custom domain here if you use one.
+ALLOWED_ORIGINS = "https://santoshkr23.github.io"
+# "deepl" or "google"
+TRANSLATE_PROVIDER = "deepl"
+# Claude model used by the AI Summarizer and Ask Your PDF tools
+AI_MODEL = "claude-haiku-5-5"
+
+# Keys are secrets, not vars. Set them with:
+#   npx wrangler secret put DEEPL_API_KEY
+#   npx wrangler secret put GOOGLE_API_KEY
+#   npx wrangler secret put ANTHROPIC_API_KEY

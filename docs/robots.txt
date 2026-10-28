@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://santoshkr23.github.io/pdf-tools/sitemap.xml
