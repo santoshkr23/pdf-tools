@@ -743,7 +743,8 @@ E.totext = { accept: 'pdf', view: 'pages', verb: 'Extract text', caveat: 'Scanne
     return { files: [{ name: `${baseName(f.name)}.${opts.fmt}`, bytes: new TextEncoder().encode(body), text: body }], note: `${chars.toLocaleString()} characters from ${plural(f.pages, 'page')}.` };
   } };
 E.pdf2word = { accept: 'pdf', view: 'pages', verb: 'Convert to Word',
-  opts: [{ k: 'mode', label: 'Output', type: 'seg', def: 'same', choices: [['same', 'Same layout'], ['text', 'Text only'], ['layout', 'Picture']], hint: '“Same layout” keeps the exact look with editable text on top of the page graphics; best opened in Microsoft Word or LibreOffice. “Text only” gives clean paragraphs. “Picture” puts an image of each page in Word.' }],
+  opts: [{ k: 'mode', label: 'Output', type: 'seg', def: 'same', choices: [['same', 'Same layout'], ['text', 'Text only'], ['layout', 'Picture']], hint: '“Same layout” keeps the exact look with editable text on top of the page graphics; best opened in Microsoft Word or LibreOffice. “Text only” gives clean paragraphs. “Picture” puts an image of each page in Word.' },
+    { k: 'q', label: 'Picture quality', type: 'seg', def: 'high', choices: [['standard', 'Standard'], ['high', 'High'], ['max', 'Maximum']], hint: 'Higher quality keeps photos, logos and QR codes sharper but makes the Word file bigger.', hideWhen: o => o.mode === 'text' }],
   async run({ files, opts, progress }) {
     const f = files[0]; const D = window.docx; if (!D) throw new Error('The Word writer didn’t load. Check your connection and reload.');
     const first = f.sizes[0] || [595, 842]; let doc; let note = '';
@@ -751,7 +752,7 @@ E.pdf2word = { accept: 'pdf', view: 'pages', verb: 'Convert to Word',
       const sections = []; let words = 0;
       for (let i = 1; i <= f.pages; i++) {
         progress(`Rebuilding page ${i} of ${f.pages}`, (i - 1) / f.pages * 0.92);
-        const pg = await layoutPage(f.view, i); words += pg.chars;
+        const pg = await layoutPage(f.view, i, opts.q); words += pg.chars;
         const tw = v => Math.round(v * 20);
         const children = [new D.Paragraph({ spacing: { before: 0, after: 0, line: 20, lineRule: D.LineRuleType.EXACT }, children: [new D.ImageRun({ type: 'jpg', data: pg.bg, transformation: { width: Math.round(pg.w * 96 / 72), height: Math.round(pg.h * 96 / 72) }, floating: { horizontalPosition: { relative: D.HorizontalPositionRelativeFrom.PAGE, offset: 0 }, verticalPosition: { relative: D.VerticalPositionRelativeFrom.PAGE, offset: 0 }, behindDocument: true, allowOverlap: true, lockAnchor: true, wrap: { type: D.TextWrappingType.NONE } } })] })];
         pg.segs.forEach(sg => {
@@ -759,7 +760,7 @@ E.pdf2word = { accept: 'pdf', view: 'pages', verb: 'Convert to Word',
           children.push(new D.Paragraph({
             frame: { type: 'absolute', position: { x: tw(Math.max(0, sg.x - 1)), y: tw(Math.max(0, sg.base - sg.size * 0.98)) }, width: tw(Math.max(8, Math.min(pg.w - sg.x + 1, sg.w * 1.16 + sg.size * 1.2))), height: tw(lh), rule: D.HeightRule.EXACT, wrap: D.FrameWrap.NONE, anchor: { horizontal: D.FrameAnchorType.PAGE, vertical: D.FrameAnchorType.PAGE } },
             spacing: { before: 0, after: 0, line: tw(lh), lineRule: D.LineRuleType.EXACT },
-            children: sg.runs.map(r => new D.TextRun({ text: r.text, size: Math.max(2, Math.round(r.size * 2)), bold: r.bold || undefined, italics: r.italic || undefined, color: r.color, font: r.font })),
+            children: sg.runs.map(r => new D.TextRun({ text: r.text, size: Math.max(2, Math.round(r.size * 2)), bold: r.bold || undefined, italics: r.italic || undefined, color: r.color, font: r.font, noProof: true })),
           }));
         });
         sections.push({ properties: { page: { size: { width: tw(pg.w), height: tw(pg.h) }, margin: { top: 0, right: 0, bottom: 0, left: 0, header: 0, footer: 0 } } }, children });
@@ -769,7 +770,7 @@ E.pdf2word = { accept: 'pdf', view: 'pages', verb: 'Convert to Word',
     } else if (opts.mode === 'layout') {
       const sections = [];
       for (let i = 1; i <= f.pages; i++) {
-        progress(`Drawing page ${i} of ${f.pages}`, (i - 1) / f.pages); const r = await renderPage(f.view, i, { scale: 2 }); const data = await blobBytes(await canvasBlob(r.canvas, 'image/jpeg', 0.88)); r.canvas.width = 0;
+        progress(`Drawing page ${i} of ${f.pages}`, (i - 1) / f.pages); const Qs = PIC_Q[opts.q] || PIC_Q.high; const r = await renderPage(f.view, i, { scale: Qs[0] }); const data = await blobBytes(await canvasBlob(r.canvas, 'image/jpeg', Qs[1])); r.canvas.width = 0;
         sections.push({ properties: { page: { size: { width: Math.round(r.w * 20), height: Math.round(r.h * 20) }, margin: { top: 0, right: 0, bottom: 0, left: 0, header: 0, footer: 0 } } }, children: [new D.Paragraph({ spacing: { before: 0, after: 0 }, children: [new D.ImageRun({ type: 'jpg', data, transformation: { width: Math.floor(r.w * 96 / 72 * 0.995), height: Math.floor(r.h * 96 / 72 * 0.995) } })] })] });
       }
       doc = new D.Document({ sections });
@@ -785,8 +786,9 @@ E.pdf2word = { accept: 'pdf', view: 'pages', verb: 'Convert to Word',
 
 // For “Same layout”: page graphics without text as a background, plus every text line with position, size, weight and colour.
 let quietText = 0;
-async function layoutPage(doc, n) {
-  const S = 2; const page = await doc.getPage(n); const vp1 = page.getViewport({ scale: 1 });
+const PIC_Q = { standard: [2, 0.86], high: [3, 0.92], max: [4, 0.95] };
+async function layoutPage(doc, n, quality) {
+  const [S, JQ] = PIC_Q[quality] || PIC_Q.high; const page = await doc.getPage(n); const vp1 = page.getViewport({ scale: 1 });
   const full = await renderPage(doc, n, { scale: S });
   const P = CanvasRenderingContext2D.prototype; const ft = P.fillText, st = P.strokeText; let bg;
   quietText++; P.fillText = function () {}; P.strokeText = function () {};
@@ -801,9 +803,14 @@ async function layoutPage(doc, n) {
     const font = /courier|mono/i.test(fname + fam) ? 'Courier New' : /times|georgia|garamond|serif(?!.*sans)|minion|cambria/i.test(fname) || (/^serif$/i.test(fam) && !/sans|arial|helv/i.test(fname)) ? 'Times New Roman' : /calibri/i.test(fname) ? 'Calibri' : /verdana/i.test(fname) ? 'Verdana' : /tahoma/i.test(fname) ? 'Tahoma' : 'Arial';
     const w = Math.max(it.width * Math.hypot(vp1.transform[0], vp1.transform[1]), size * 0.3 * it.str.length);
     // colour: the pixel that changes most between the page with and without text
-    let best = -1, col = '000000'; const x0 = Math.max(0, Math.floor(tx[4] * S)), x1 = Math.min(W - 1, Math.ceil((tx[4] + w) * S)), y0 = Math.max(0, Math.floor((tx[5] - size * 0.85) * S)), y1 = Math.min(H - 1, Math.ceil((tx[5] + size * 0.15) * S));
-    for (let y = y0; y <= y1; y += 2) for (let x = x0; x <= x1; x += 2) { const k = (y * W + x) * 4; const d = Math.abs(A[k] - B[k]) + Math.abs(A[k + 1] - B[k + 1]) + Math.abs(A[k + 2] - B[k + 2]); if (d > best) { best = d; col = ((1 << 24) | (A[k] << 16) | (A[k + 1] << 8) | A[k + 2]).toString(16).slice(1).toUpperCase(); } }
-    if (best < 90) col = '000000';
+    let best = -1, col = '000000', cr = 0, cg = 0, cb = 0; const x0 = Math.max(0, Math.floor(tx[4] * S)), x1 = Math.min(W - 1, Math.ceil((tx[4] + w) * S)), y0 = Math.max(0, Math.floor((tx[5] - size * 0.85) * S)), y1 = Math.min(H - 1, Math.ceil((tx[5] + size * 0.15) * S));
+    for (let y = y0; y <= y1; y += 2) for (let x = x0; x <= x1; x += 2) { const k = (y * W + x) * 4; const d = Math.abs(A[k] - B[k]) + Math.abs(A[k + 1] - B[k + 1]) + Math.abs(A[k + 2] - B[k + 2]); if (d > best) { best = d; cr = A[k]; cg = A[k + 1]; cb = A[k + 2]; } }
+    { // tidy the sampled colour: near-black becomes pure black, near-white pure white, faint samples fall back to black
+      const mx = Math.max(cr, cg, cb), mn = Math.min(cr, cg, cb);
+      if (best < 90 || (mx < 95 && mx - mn < 40)) col = '000000';
+      else if (mn > 225) col = 'FFFFFF';
+      else { const boost = v => Math.max(0, Math.min(255, Math.round(mx - mn < 30 ? (v < 128 ? v * 0.75 : v) : v))); col = ((1 << 24) | (boost(cr) << 16) | (boost(cg) << 8) | boost(cb)).toString(16).slice(1).toUpperCase(); }
+    }
     items.push({ x: tx[4], base: tx[5], size, w, text: it.str, bold: /bold|black|heavy|semibold|demi/i.test(fname), italic: /italic|oblique/i.test(fname), font, color: col });
   }
   // group into lines, then split lines into segments at large gaps
@@ -824,7 +831,7 @@ async function layoutPage(doc, n) {
     }
   }
   segs.forEach(sg => { sg.w = sg.end - sg.x; sg.runs.forEach(r => { r.text = r.text.replace(/[\t\r\n]+/g, ' '); }); });
-  const bgBytes = await blobBytes(await canvasBlob(bg.canvas, 'image/jpeg', 0.86)); full.canvas.width = 0; bg.canvas.width = 0;
+  const bgBytes = await blobBytes(await canvasBlob(bg.canvas, 'image/jpeg', JQ)); full.canvas.width = 0; bg.canvas.width = 0;
   return { w: vp1.width, h: vp1.height, segs: segs.filter(sg => sg.runs.some(r => r.text.trim())), bg: bgBytes, chars };
 }
 E.pdf2excel = { accept: 'pdf', view: 'pages', verb: 'Convert to Excel', caveat: 'Works with PDFs that contain real text, such as exported statements and reports. Run scans through OCR PDF first.',
